@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ステークホルダー管理システム</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+
+    <!-- Firebase SDK -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+        import { getAnalytics } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-analytics.js";
+        import {
+            getFirestore,
+            collection,
+            addDoc,
+            getDocs,
+            setDoc,
+            doc,
+            deleteDoc,
+            onSnapshot,
+            query,
+            orderBy
+        } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyD-b5ZsYj_xhZrWUi9peVoAoXbXN0QTZ_o",
+            authDomain: "stakeholder-app-9d485.firebaseapp.com",
+            projectId: "stakeholder-app-9d485",
+            storageBucket: "stakeholder-app-9d485.appspot.com",
+            messagingSenderId: "511257563558",
+            appId: "1:511257563558:web:cee913ea2ec55985583f67",
+            measurementId: "G-267HG0YE04"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const analytics = getAnalytics(app);
+        const db = getFirestore(app);
+
+        window.firebaseDB = db;
+        window.firebaseAddDoc = addDoc;
+        window.firebaseCollection = collection;
+        window.firebaseOnSnapshot = onSnapshot;
+        window.firebaseQuery = query;
+        window.firebaseOrderBy = orderBy;
+        window.firebaseGetDocs = getDocs;
+        window.firebaseSetDoc = setDoc;
+        window.firebaseDoc = doc;
+        window.firebaseDeleteDoc = deleteDoc;
+    </script>
+    <script type="module">
+        document.addEventListener("DOMContentLoaded", () => {
+            const db = window.firebaseDB;
+            const collectionRef = window.firebaseCollection(db, "stakeholderData");
+            const addDoc = window.firebaseAddDoc;
+            const setDoc = window.firebaseSetDoc;
+            const deleteDoc = window.firebaseDeleteDoc;
+            const docFn = window.firebaseDoc;
+            const onSnapshot = window.firebaseOnSnapshot;
+
+            const stakeholderGrid = document.getElementById("stakeholder-grid");
+            const saveBtn = document.getElementById("save-btn");
+            const deleteBtn = document.getElementById("delete-btn");
+            const backBtn = document.getElementById("back-btn");
+            const addNewBtn = document.getElementById("add-new-btn");
+            const overviewDiagram = document.getElementById("overview-diagram");
+
+            let currentDocId = null;
+
+            const renderGrid = (snapshot) => {
+                stakeholderGrid.innerHTML = "";
+                const nodes = [];
+                const links = [];
+
+                snapshot.forEach(doc => {
+                    const data = doc.data();
+                    const card = document.createElement("div");
+                    card.className = "stakeholder-card";
+                    card.innerHTML = `<strong>${data.personName}</strong><br><small>${data.targetMarket}</small>`;
+                    card.addEventListener("click", () => {
+                        document.getElementById("person-name").value = data.personName;
+                        document.getElementById("target-market").value = data.targetMarket;
+                        const container = document.getElementById("stakeholder-items");
+                        container.innerHTML = "";
+                        data.stakeholders.forEach(st => {
+                            const div = document.createElement("div");
+                            div.className = "stakeholder-entry";
+                            div.setAttribute("data-genre", st.genre);
+                            div.setAttribute("data-detail", st.detail);
+                            div.innerText = `${st.genre}：${st.detail}`;
+                            container.appendChild(div);
+                        });
+                        currentDocId = doc.id;
+                        document.getElementById("main-view").classList.remove("active");
+                        document.getElementById("edit-view").classList.add("active");
+                    });
+                    stakeholderGrid.appendChild(card);
+
+                    // D3ノードとリンクを構築
+                    const personId = doc.id;
+                    nodes.push({ id: personId, name: data.personName, group: "person" });
+                    (data.stakeholders || []).forEach((st, index) => {
+                        const sid = `${personId}-st${index}`;
+                        nodes.push({ id: sid, name: st.detail, group: st.genre });
+                        links.push({ source: personId, target: sid });
+                    });
+                });
+
+                // D3描画更新
+                overviewDiagram.innerHTML = "";
+                const svg = d3.select(overviewDiagram);
+                const width = overviewDiagram.clientWidth;
+                const height = overviewDiagram.clientHeight;
+
+                const simulation = d3.forceSimulation(nodes)
+                    .force("link", d3.forceLink(links).id(d => d.id).distance(80))
+                    .force("charge", d3.forceManyBody().strength(-300))
+                    .force("center", d3.forceCenter(width / 2, height / 2));
+
+                const link = svg.append("g")
+                    .attr("stroke", "#ccc")
+                    .selectAll("line")
+                    .data(links)
+                    .enter()
+                    .append("line")
+                    .attr("stroke-width", 2);
+
+                const node = svg.append("g")
+                    .attr("stroke", "#fff")
+                    .attr("stroke-width", 1.5)
+                    .selectAll("circle")
+                    .data(nodes)
+                    .enter()
+                    .append("circle")
+                    .attr("r", d => d.group === "person" ? 25 : 12)
+                    .attr("fill", d => d.group === "person" ? "#007b8a" : d3.schemeCategory10[d.group.length % 10])
+                    .call(d3.drag()
+                        .on("start", dragstarted)
+                        .on("drag", dragged)
+                        .on("end", dragended));
+
+                const label = svg.append("g")
+                    .selectAll("text")
+                    .data(nodes)
+                    .enter()
+                    .append("text")
+                    .text(d => d.name)
+                    .attr("font-size", "10px")
+                    .attr("text-anchor", "middle")
+                    .attr("dy", 3);
+
+                simulation.on("tick", () => {
+                    link
+                        .attr("x1", d => d.source.x)
+                        .attr("y1", d => d.source.y)
+                        .attr("x2", d => d.target.x)
+                        .attr("y2", d => d.target.y);
+
+                    node
+                        .attr("cx", d => d.x)
+                        .attr("cy", d => d.y);
+
+                    label
+                        .attr("x", d => d.x)
+                        .attr("y", d => d.y - (d.group === "person" ? 30 : 15));
+                });
+
+                function dragstarted(event, d) {
+                    if (!event.active) simulation.alphaTarget(0.3).restart();
+                    d.fx = d.x;
+                    d.fy = d.y;
+                }
+
+                function dragged(event, d) {
+                    d.fx = event.x;
+                    d.fy = event.y;
+                }
+
+                function dragended(event, d) {
+                    if (!event.active) simulation.alphaTarget(0);
+                    d.fx = null;
+                    d.fy = null;
+                }
+            };
+
+            // 🔄 リアルタイム同期とD3可視化
+            window.firebaseOnSnapshot(window.firebaseCollection(db, "stakeholderData"), renderGrid);
+
+            saveBtn.addEventListener("click", async () => {
+                const personName = document.getElementById("person-name").value;
+                const targetMarket = document.getElementById("target-market").value;
+                const stakeholderElements = document.querySelectorAll("#stakeholder-items .stakeholder-entry");
+                const stakeholders = Array.from(stakeholderElements).map(el => ({
+                    genre: el.getAttribute("data-genre"),
+                    detail: el.getAttribute("data-detail")
+                }));
+
+                try {
+                    if (currentDocId) {
+                        await setDoc(docFn(db, "stakeholderData", currentDocId), {
+                            personName,
+                            targetMarket,
+                            stakeholders,
+                            updatedAt: new Date()
+                        });
+                    } else {
+                        await addDoc(collectionRef, {
+                            personName,
+                            targetMarket,
+                            stakeholders,
+                            createdAt: new Date()
+                        });
+                    }
+                    alert("保存しました！");
+                    currentDocId = null;
+                    document.getElementById("edit-view").classList.remove("active");
+                    document.getElementById("main-view").classList.add("active");
+                } catch (e) {
+                    console.error("Firestore保存エラー", e);
+                    alert("保存に失敗しました。" ... [truncated]
